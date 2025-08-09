@@ -1,0 +1,31 @@
+#pragma once
+#include <Arduino.h>
+#include <WiFi.h>
+#include <WebServer.h>
+#include <ArduinoOTA.h>
+#include <Update.h>
+#include "Debug.h"
+#include "NetUdp.h"
+
+// ESP32: WebServer + custom /update (Update.h) + ArduinoOTA
+class NetHttpOTA {
+public:
+  void begin(const char* apSsid, const char* apPass, const char* hostname, NetUdp* udp);
+  void loop(){ ArduinoOTA.handle(); server_.handleClient(); }
+  void sendText(const String& s){ server_.send(200,"text/plain", s); }
+
+private:
+  WebServer server_{80};
+  NetUdp* udp_ = nullptr;
+
+  void handleRoot();
+  void handleUpdate();
+  void handleUpdateUpload();
+  void pageDebug();
+  void txtDebug();
+  void clearDebugPost();
+  void clearDebugGet();
+  void dbgOn();
+  void dbgOff();
+  void dbgLevel();
+};

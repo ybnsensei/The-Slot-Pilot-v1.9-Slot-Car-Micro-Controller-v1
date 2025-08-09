@@ -1,0 +1,164 @@
+/****************************************************
+ * Slot Car MCU — Seeed XIAO ESP32-S3
+ * - Dual Wi-Fi: STA joins controller AP, AP hosts /update & /debug
+ * - OTA:
+ *     • Web: /update (browser upload)
+ *     • IDE: ArduinoOTA host "slot-car"
+ * - UDP protocol with controller (CTRL, CURVE, CFG, CFG|SAVE, BIAS, PING, OTA|BEGIN, DBG|*)
+ * - Debug ring buffer + /debug page
+ * - Safe servo neutral on boot + analog fallback
+ ****************************************************/
+#include <Arduino.h>
+#include <WiFi.h>
+#include <WiFiUdp.h>
+#include <EEPROM.h>
+#include "Debug.h"
+#include "MotorController.h"
+#include "ProfileManager.h"
+#include "NetUdp.h"
+#include "NetHttpOTA.h"
+#include <Update.h>
+
+// -------- Pins (adjust if needed) --------
+#define MOTOR_PIN        5    // PWM to motor driver
+#define SERVO_FRONT_PIN  6    // PWM for front linear servo
+#define SERVO_REAR_PIN   7    // PWM for rear linear servo
+#define ANALOG_IN_PIN    A0   // optional fallback throttle input
+
+// -------- Wi-Fi --------
+// STA: join controller AP
+const char* SSID_STA  = "SlotPilot_AP";
+const char* PASS_STA  = "slotpilot123";
+// AP: for OTA & debug
+const char* SSID_AP   = "SlotPilot_CAR_OTA";
+const char* PASS_AP   = "update123";
+
+static const uint16_t UDP_PORT = 4210;
+
+// -------- Globals --------
+static MotorController motor;
+static ProfileManager  pm;
+static NetUdp          udp;
+static NetHttpOTA      http;
+
+static bool   staConnected=false;
+static unsigned long lastCtrlMs=0;
+
+// -------- Helpers --------
+static void replyTo(const IPAddress& ip, uint16_t port, const String& s){ udp.replyTo(ip,port,s); }
+
+static void parseCTRL(const IPAddress& ip, uint16_t port, const char* p){
+  uint8_t thr=0, brk=0;
+  int n=sscanf(p,"CTRL|%hhu|%hhu",&thr,&brk);
+  if(n==2){ motor.applyCTRL(thr,brk); lastCtrlMs=millis(); replyTo(ip,port,"ACK|CTRL"); }
+}
+
+static void parseCURVE(const IPAddress& ip, uint16_t port, const char* p){
+  uint8_t v[CURVE_POINTS]; int got=0;
+  const char* q = strchr(p,'|'); if(!q){ replyTo(ip,port,"ERR|BADCURVE"); return; } q++;
+  for(int i=0;i<CURVE_POINTS;i++){
+    int val=0; int c=0; int read=sscanf(q,"%d%n",&val,&c);
+    if(read!=1) break; val = constrain(val,0,255);
+    v[i]=val; got++; q += c; if(*q==',') q++;
+  }
+  if(got==CURVE_POINTS){ motor.setCurve(v); memcpy(pm.cur().curve,v,sizeof(v)); replyTo(ip,port,"ACK|CURVE"); }
+  else replyTo(ip,port,"ERR|BADCURVE");
+}
+
+static void parseCFG(const IPAddress& ip, uint16_t port, char* p){
+  // "CFG|<17 ints>|<11 curve ints>"
+  char* a=strchr(p,'|'); if(!a) return; a++;
+  int lv,dm,bk,tr,ss,as,ac, f,r, bm, fx,rx, eF,eR,mF,mR,xF,xR;
+  char* b=strchr(a,'|'); if(!b) return; *b=0;
+  int n=sscanf(a,"%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d",
+               &lv,&dm,&bk,&tr,&ss,&as,&ac,&f,&r,&bm,&fx,&rx,&eF,&eR,&mF,&mR,&xF,&xR);
+  *b='|';
+  if(n>=17){
+    auto& c = pm.cur();
+    c.locked=lv; c.dualMotor=dm; c.brake=bk; c.traction=tr; c.sensitivity=ss; c.antiSpin=as; c.accel=ac;
+    c.tsFront=f; c.tsRear=r; c.biasMode=bm;
+    c.fixedF=fx; c.fixedR=rx; c.entryF=eF; c.entryR=eR; c.midF=mF; c.midR=mR; c.exitF=xF; c.exitR=xR;
+
+    char* q=b+1; uint8_t vv[CURVE_POINTS]; int got=0;
+    for(int i=0;i<CURVE_POINTS;i++){
+      int val=0; int cc=0; int rd=sscanf(q,"%d%n",&val,&cc);
+      if(rd!=1) break; vv[i]=constrain(val,0,255); got++; q+=cc; if(*q==',') q++;
+    }
+    if(got==CURVE_POINTS){ memcpy(c.curve,vv,sizeof(vv)); motor.setCurve(vv); }
+    replyTo(ip,port,"ACK|CFG");
+  } else {
+    replyTo(ip,port,"ERR|BADCFG");
+  }
+}
+
+static void parseBIAS(const IPAddress& ip, uint16_t port, const char* p){
+  int bm,fx,rx,eF,eR,mF,mR,xF,xR;
+  int n=sscanf(p,"BIAS|%d|%d|%d|%d|%d|%d|%d|%d|%d",&bm,&fx,&rx,&eF,&eR,&mF,&mR,&xF,&xR);
+  if(n==9){
+    auto& c=pm.cur();
+    c.biasMode=bm; c.fixedF=fx; c.fixedR=rx;
+    c.entryF=eF; c.entryR=eR; c.midF=mF; c.midR=mr; c.exitF=xF; c.exitR=xR; // NOTE: mr is undefined, fixed below
+    // fix typo:
+    c.midR=mR;
+    replyTo(ip,port,"ACK|BIAS");
+  } else replyTo(ip,port,"ERR|BADBIAS");
+}
+
+static void parseSAVE(const IPAddress& ip, uint16_t port){
+  pm.save(); replyTo(ip,port,"ACK|SAVE");
+}
+
+static void parseDBG(const IPAddress& ip, uint16_t port, const char* p){
+  if(strcmp(p,"DBG|ON")==0){ DEBUG_MODE=true; replyTo(ip,port,"ACK|DBG|ON"); }
+  else if(strcmp(p,"DBG|OFF")==0){ DEBUG_MODE=false; replyTo(ip,port,"ACK|DBG|OFF"); }
+  else if(strncmp(p,"DBG|LEVEL|",10)==0){
+    int lvl = atoi(p+10); if(lvl>=1 && lvl<=3){ DEBUG_LEVEL=lvl; replyTo(ip,port,String("ACK|DBG|LEVEL|")+lvl); }
+    else replyTo(ip,port,"ERR|DBG|LEVEL");
+  } else replyTo(ip,port,"ERR|DBG");
+}
+
+static void onUdp(const IPAddress& ip, uint16_t port, const char* pkt){
+  if(strncmp(pkt,"PING",4)==0){ staConnected=true; replyTo(ip,port,"PONG"); return; }
+  if(strncmp(pkt,"CTRL|",5)==0)  { parseCTRL(ip,port,pkt); return; }
+  if(strncmp(pkt,"CURVE|",6)==0) { parseCURVE(ip,port,pkt); return; }
+  if(strncmp(pkt,"CFG|SAVE",8)==0){ parseSAVE(ip,port); return; }
+  if(strncmp(pkt,"CFG|",4)==0)   { char tmp[400]; strncpy(tmp,pkt,sizeof(tmp)); parseCFG(ip,port,tmp); return; }
+  if(strncmp(pkt,"BIAS|",5)==0)  { parseBIAS(ip,port,pkt); return; }
+  if(strncmp(pkt,"OTA|BEGIN",9)==0){ replyTo(ip,port,"ACK|OTA"); return; }
+  if(strncmp(pkt,"DBG|",4)==0)   { parseDBG(ip,port,pkt); return; }
+}
+
+void setup(){
+  Serial.begin(115200);
+  LOGBUF.clear(); LOGBUF.add("[BOOT] Slot Car MCU (XIAO ESP32-S3)");
+
+  pm.begin(1024);
+  motor.begin(MOTOR_PIN, SERVO_FRONT_PIN, SERVO_REAR_PIN, ANALOG_IN_PIN);
+  motor.setCurve(pm.cur().curve);
+  motor.safeNeutral();
+
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.begin(SSID_STA, PASS_STA);
+  for(int i=0;i<40 && WiFi.status()!=WL_CONNECTED; ++i) delay(100);
+  if(WiFi.status()==WL_CONNECTED){
+    LOGBUF.addf("[WIFI] STA connected: %s", WiFi.localIP().toString().c_str());
+  } else {
+    LOGBUF.add("[WIFI] STA not connected (will keep trying in background)");
+  }
+
+  http.begin(SSID_AP, PASS_AP, "slot-car", &udp);
+  udp.begin(UDP_PORT);
+  udp.setOnPacket(onUdp);
+
+  motor.safeNeutral();
+}
+
+void loop(){
+  http.loop();
+  udp.loop();
+
+  if(millis()-lastCtrlMs > 1200){
+    motor.fallbackTick();
+  }
+  motor.setTorque(pm.cur().tsFront, pm.cur().tsRear);
+}

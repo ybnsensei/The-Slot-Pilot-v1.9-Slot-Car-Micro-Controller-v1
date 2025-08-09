@@ -1,0 +1,139 @@
+#include "DisplayManager.h"
+#include <WiFi.h>
+
+bool DisplayManager::begin(uint8_t addr, int sda, int scl){
+  if(sda!=-1 && scl!=-1) Wire.begin(sda, scl);
+  if(!d_.begin(SSD1306_SWITCHCAPVCC, addr)) return false;
+  d_.clearDisplay(); d_.display(); return true;
+}
+
+void DisplayManager::drawTelemetry(const String& profileName, bool locked, bool carConn, int tsFrontRaw,
+                                   uint8_t throttle, uint8_t coastBrake, int focusIdx, bool dbg){
+  d_.clearDisplay(); d_.setTextSize(1); d_.setTextColor(WHITE); d_.setCursor(0,0);
+  d_.print(profileName); drawLock_(locked, 54, 0);
+  if(carConn) drawConnBars_(barsFromRSSI_(WiFi.RSSI())); else { d_.setCursor(68,0); d_.print("No Car"); }
+  if(dbg){ d_.setCursor(100,0); d_.print("DBG"); }
+  d_.setCursor(86,56); d_.print("TS ");
+  int fPct = map(tsFrontRaw,0,255,0,100); int rPct = 100 - fPct;
+  if(focusIdx==2) d_.drawRect(84,54,44,10,WHITE);
+  d_.print(fPct); d_.print("/"); d_.print(rPct);
+  d_.setCursor(0,56); d_.print("DM");
+  int y=14;
+  d_.setCursor(2,y); d_.print("Throttle  Min"); drawShimmerBar_(52,y,70,8, throttle, (shimmerPhase_+=1));
+  d_.setCursor(104,y); d_.print("Max");
+  y+=12;
+  d_.setCursor(2,y); d_.print("Coast Brk Min"); drawShimmerBar_(52,y,70,8, coastBrake, (shimmerPhase_+=1));
+  d_.setCursor(104,y); d_.print("Max");
+  y+=12;
+  d_.setCursor(2,y); d_.print("(Hold to enter menus)");
+  d_.display();
+}
+
+void DisplayManager::drawMainMenu(const char** items, int count, int sel){
+  d_.clearDisplay();
+  d_.setCursor(0,0); d_.print("Menu");
+  for(int i=0;i<count;i++){ d_.setCursor(0,12+i*10); d_.print((i==sel)?"> ":"  "); d_.print(items[i]); }
+  d_.display();
+}
+
+void DisplayManager::drawBiasMenu(int sel){
+  d_.clearDisplay(); d_.setCursor(0,0); d_.print("AWD → Bias");
+  d_.setCursor(0,12); d_.print((sel==0?"> ":"  ")); d_.print("Auto Bias: toggle");
+  d_.setCursor(0,22); d_.print((sel==1?"> ":"  ")); d_.print("Presets");
+  d_.setCursor(0,32); d_.print((sel==2?"> ":"  ")); d_.print("Customize: Fixed");
+  d_.setCursor(0,42); d_.print((sel==3?"> ":"  ")); d_.print("Customize: Entry/Mid/Exit");
+  d_.setCursor(0,54); d_.print((sel==4?"> ":"  ")); d_.print("OK   ");
+  d_.setCursor(50,54);d_.print((sel==5?"> ":"  ")); d_.print("Cancel");
+  d_.display();
+}
+
+void DisplayManager::drawBiasPresets(uint8_t currentIdx, const uint8_t* front){
+  d_.clearDisplay(); d_.setCursor(0,0); d_.print("Presets (30/70..70/30)");
+  for(int i=0;i<5;i++){ d_.setCursor(0,12+i*10); d_.print((i==currentIdx?"> ":"  ")); int f=map(front[i],0,255,0,100); d_.print(f); d_.print("/"); d_.print(100-f); }
+  d_.display();
+}
+
+void DisplayManager::drawBiasFixed(uint8_t f,uint8_t r,int idx){
+  d_.clearDisplay(); d_.setCursor(0,0); d_.print("Customize: Fixed");
+  d_.setCursor(0,14); d_.print((idx==0?"> ":"  ")); d_.print("Front: "); d_.print(map(f,0,255,0,100)); d_.print("%");
+  d_.setCursor(0,26); d_.print((idx==1?"> ":"  ")); d_.print("Rear : "); d_.print(map(r,0,255,0,100)); d_.print("%");
+  d_.setCursor(0,46); d_.print((idx==2?"> ":"  ")); d_.print("OK"); d_.setCursor(40,46); d_.print((idx==3?"> ":"  ")); d_.print("Cancel");
+  d_.display();
+}
+
+void DisplayManager::drawBiasEMX(uint8_t ef,uint8_t er,uint8_t mf,uint8_t mr,uint8_t xf,uint8_t xr,int idx){
+  d_.clearDisplay(); d_.setCursor(0,0); d_.print("Customize: E/M/X");
+  d_.setCursor(0,12); d_.print((idx==0?"> ":"  ")); d_.print("Entry F "); d_.print(map(ef,0,255,0,100)); d_.print("%");
+  d_.setCursor(0,22); d_.print((idx==1?"> ":"  ")); d_.print("Entry R "); d_.print(map(er,0,255,0,100)); d_.print("%");
+  d_.setCursor(0,32); d_.print((idx==2?"> ":"  ")); d_.print("Mid   F "); d_.print(map(mf,0,255,0,100)); d_.print("%");
+  d_.setCursor(0,42); d_.print((idx==3?"> ":"  ")); d_.print("Mid   R "); d_.print(map(mr,0,255,0,100)); d_.print("%");
+  d_.display();
+  d_.clearDisplay(); d_.setCursor(0,0); d_.print("Customize: E/M/X (2)");
+  d_.setCursor(0,12); d_.print((idx==4?"> ":"  ")); d_.print("Exit  F "); d_.print(map(xf,0,255,0,100)); d_.print("%");
+  d_.setCursor(0,22); d_.print((idx==5?"> ":"  ")); d_.print("Exit  R "); d_.print(map(xr,0,255,0,100)); d_.print("%");
+  d_.setCursor(0,40); d_.print((idx==6?"> ":"  ")); d_.print("OK");
+  d_.setCursor(36,40); d_.print((idx==7?"> ":"  ")); d_.print("Cancel");
+  d_.display();
+}
+
+void DisplayManager::drawCurveEditor(const uint8_t* curve, int points, int cursor){
+  d_.clearDisplay(); d_.setCursor(0,0); d_.print("Curve Mapping");
+  for(int i=0;i<points-1;i++){
+    int x1=(i*(128-1))/(points-1), x2=((i+1)*(128-1))/(points-1);
+    int y1=63 - map(curve[i],0,255,0,48), y2=63 - map(curve[i+1],0,255,0,48);
+    d_.drawLine(x1,y1,x2,y2,WHITE);
+  }
+  int x=(cursor*(128-1))/(points-1);
+  d_.drawLine(x,12,x,63,WHITE);
+  d_.setCursor(0,54); d_.print("Val "); d_.print(curve[cursor]); d_.print("  OK=press");
+  d_.display();
+}
+
+void DisplayManager::drawDebugMenu(bool on, uint8_t lvl, int row){
+  d_.clearDisplay();
+  d_.setCursor(0,0); d_.print("Debug Mode");
+  d_.setCursor(0,12); d_.print((row==0?"> ":"  ")); d_.print("Local: "); d_.print(on?"ON":"OFF");
+  d_.setCursor(0,22); d_.print((row==1?"> ":"  ")); d_.print("Level: "); d_.print((int)lvl);
+  d_.setCursor(0,34); d_.print((row==2?"> ":"  ")); d_.print("Send Car ON/OFF");
+  d_.setCursor(0,46); d_.print((row==3?"> ":"  ")); d_.print("Send Car Level");
+  d_.setCursor(0,56); d_.print((row==4?"> ":"  ")); d_.print("Back");
+  d_.display();
+}
+
+uint8_t DisplayManager::barsFromRSSI_(long rssi){
+  if(rssi==0) return 0;
+  if(rssi>-60) return 4; if(rssi>-70) return 3; if(rssi>-80) return 2; if(rssi>-90) return 1; return 0;
+}
+
+void DisplayManager::drawConnBars_(uint8_t b){
+  static const uint8_t bmp[5][8] PROGMEM = {
+    {0,0,0,0,0,0,0,0},
+    {0b0,0b0,0b0,0b00011000,0b00011000,0,0,0},
+    {0b0,0b0,0b00111100,0b00111100,0b00111100,0,0,0},
+    {0b0,0b01111110,0b01111110,0b01111110,0b01111110,0,0,0},
+    {0b11111111,0b11111111,0b11111111,0b11111111,0b11111111,0,0,0}
+  };
+  d_.drawBitmap(68,0,bmp[b],8,8,WHITE);
+}
+
+void DisplayManager::drawLock_(bool locked,int x,int y){
+  static const uint8_t lockBmp[8] PROGMEM = {
+    0b00111100,0b01000010,0b10011001,0b10111101,0b10111101,0b10000001,0b01111110,0b00000000
+  };
+  static const uint8_t unlockBmp[8] PROGMEM = {
+    0b00111100,0b01000010,0b10011001,0b10111101,0b10000001,0b10111110,0b01111110,0b00000000
+  };
+  d_.drawBitmap(x,y, locked?lockBmp:unlockBmp, 8,8,WHITE);
+}
+
+void DisplayManager::drawShimmerBar_(int x,int y,int w,int h,int value,uint8_t phase){
+  int fillW = map(value,0,255,0,w);
+  d_.drawRect(x,y,w,h,WHITE);
+  if(fillW>0){
+    d_.fillRect(x+1,y+1,fillW-2,h-2,WHITE);
+    int edge = x + 1 + fillW - 1;
+    if(edge > x+1 && edge < x+w-1){
+      for(int k=0;k<h-2;k++) if(((k+phase)&3)==0) d_.drawPixel(edge,y+1+k,BLACK);
+    }
+  }
+}

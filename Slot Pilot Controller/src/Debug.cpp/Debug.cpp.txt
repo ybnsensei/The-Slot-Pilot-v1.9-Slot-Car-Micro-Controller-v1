@@ -1,0 +1,5 @@
+#include "Debug.h"
+
+bool     DEBUG_MODE  = false;
+uint8_t  DEBUG_LEVEL = 1;
+DebugLog LOGBUF;

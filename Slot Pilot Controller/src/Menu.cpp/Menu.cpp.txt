@@ -1,0 +1,149 @@
+#include "Menu.h"
+
+static constexpr uint8_t presetFront[5] = {77,153,128,179,204};
+static constexpr uint8_t presetRear [5] = {204,179,128,153,77};
+
+void MenuUI::begin(DisplayManager* d, ProfileManager* pm, MotorModel* mm){
+  d_=d; pm_=pm; mm_=mm;
+}
+
+void MenuUI::tick(){
+  if(!open_) return;
+  d_->drawMainMenu(kMainItems,kMainCount,sel_);
+  if(onUp && onUp()){   sel_ = (sel_==0? kMainCount-1 : sel_-1); delay(120); }
+  if(onDown && onDown()){ sel_ = (sel_+1)%kMainCount;           delay(120); }
+  if(onClick && onClick()){
+    if(sel_==0) runBiasMenu_();
+    else if(sel_==1) runCurveEditor_();
+    else if(sel_==2) runProfiles_();
+    else if(sel_==3) { if(onSendSAVE) onSendSAVE(); }
+    else if(sel_==4) { /* OTA already running: /update + ArduinoOTA */ }
+    else if(sel_==5) { runDebugMenu_(); }
+    else if(sel_==6) { close(); }
+  }
+}
+
+void MenuUI::runBiasMenu_(){
+  int row=0;
+  while(open_){
+    d_->drawBiasMenu(row);
+    if(onUp && onUp()){   row=(row==0?5:row-1); delay(120); }
+    if(onDown && onDown()){ row=(row+1)%6;      delay(120); }
+    if(onClick && onClick()){
+      if(row==0){ pm_->cur().biasMode = !pm_->cur().biasMode; if(onSendBias) onSendBias(); }
+      else if(row==1){ runBiasPresets_(); }
+      else if(row==2){ runBiasFixed_(); }
+      else if(row==3){ runBiasEMX_(); }
+      else if(row>=4){ break; }
+    }
+  }
+}
+
+void MenuUI::runBiasPresets_(){
+  auto& p=pm_->cur(); int ps=p.torquePresetIdx;
+  while(open_){
+    d_->drawBiasPresets(ps, presetFront);
+    if(onUp && onUp()){   ps=(ps==0?4:ps-1); delay(120); }
+    if(onDown && onDown()){ ps=(ps+1)%5;     delay(120); }
+    if(onClick && onClick()){
+      p.torquePresetIdx=ps; p.fixedF=presetFront[ps]; p.fixedR=presetRear[ps];
+      if(p.biasMode==0){ p.tsFront=p.fixedF; p.tsRear=p.fixedR; }
+      if(onSendBias) onSendBias();
+      break;
+    }
+  }
+}
+
+void MenuUI::runBiasFixed_(){
+  auto& p=pm_->cur(); uint8_t f=p.fixedF, r=p.fixedR;
+  int idx=0; bool done=false, ok=false;
+  while(open_ && !done){
+    d_->drawBiasFixed(f,r,idx);
+    if(onUp && onUp()){   idx=(idx==0?3:idx-1); delay(120); }
+    if(onDown && onDown()){ idx=(idx+1)%4;      delay(120); }
+    if(onLeft && onLeft() && idx<=1){ if(idx==0 && f>0) f--; if(idx==1 && r>0) r--; delay(40); }
+    if(onRight&& onRight()&& idx<=1){ if(idx==0 && f<255) f++; if(idx==1 && r<255) r++; delay(40); }
+    if(onClick && onClick()){ if(idx==2){ ok=true; done=true; } if(idx==3){ ok=false; done=true; } }
+  }
+  if(ok){
+    p.fixedF=f; p.fixedR=r;
+    if(p.biasMode==0){ p.tsFront=f; p.tsRear=r; }
+    if(onSendBias) onSendBias();
+  }
+}
+
+void MenuUI::runBiasEMX_(){
+  auto& p=pm_->cur();
+  uint8_t ef=p.entryF, er=p.entryR, mf=p.midF, mr=p.midR, xf=p.exitF, xr=p.exitR;
+  bool done=false, ok=false; int idx=0;
+  auto dec=[&](uint8_t&v){ if(v>0)v--; };
+  auto inc=[&](uint8_t&v){ if(v<255)v++; };
+  while(open_ && !done){
+    d_->drawBiasEMX(ef,er,mf,mr,xf,xr,idx);
+    if(onUp && onUp()){   idx=(idx==0?7:idx-1); delay(120); }
+    if(onDown && onDown()){ idx=(idx+1)%8;      delay(120); }
+    if(onLeft && onLeft()){
+      if(idx==0)dec(ef); else if(idx==1)dec(er); else if(idx==2)dec(mf);
+      else if(idx==3)dec(mr); else if(idx==4)dec(xf); else if(idx==5)dec(xr);
+      delay(40);
+    }
+    if(onRight && onRight()){
+      if(idx==0)inc(ef); else if(idx==1)inc(er); else if(idx==2)inc(mf);
+      else if(idx==3)inc(mr); else if(idx==4)inc(xf); else if(idx==5)inc(xr);
+      delay(40);
+    }
+    if(onClick && onClick()){ if(idx==6){ ok=true; done=true; } if(idx==7){ ok=false; done=true; } }
+  }
+  if(ok){
+    p.entryF=ef; p.entryR=er; p.midF=mf; p.midR=mr; p.exitF=xf; p.exitR=xr;
+    if(onSendBias) onSendBias();
+  }
+}
+
+void MenuUI::runCurveEditor_(){
+  auto& p=pm_->cur(); int idx=0; bool done=false;
+  while(open_ && !done){
+    d_->drawCurveEditor(p.curve, CURVE_POINTS, idx);
+    if(onLeft && onLeft() && p.curve[idx]>0){ p.curve[idx]--; if(onSendCurve) onSendCurve(); delay(10); }
+    if(onRight&& onRight()&& p.curve[idx]<255){ p.curve[idx]++; if(onSendCurve) onSendCurve(); delay(10); }
+    if(onUp && onUp()){   idx=(idx==0?CURVE_POINTS-1:idx-1); delay(120); }
+    if(onDown && onDown()){ idx=(idx+1)%CURVE_POINTS;        delay(120); }
+    if(onClick && onClick()){ done=true; if(onSendCFG) onSendCFG(); }
+  }
+}
+
+void MenuUI::runProfiles_(){
+  int s=0; const char* lines[]={"Save Local","Load Local","Send CFG|SAVE","Back"};
+  while(open_){
+    d_->drawMainMenu(lines,4,s);
+    if(onUp && onUp()){   s=(s==0?3:s-1); delay(120); }
+    if(onDown && onDown()){ s=(s+1)%4;    delay(120); }
+    if(onClick && onClick()){
+      if(s==0){ pm_->saveLocal(); d_->toast("Saved", 500); }
+      else if(s==1){ pm_->loadLocal(); if(onSendCFG) onSendCFG(); }
+      else if(s==2){ if(onSendSAVE) onSendSAVE(); }
+      else if(s==3){ break; }
+    }
+  }
+}
+
+void MenuUI::runDebugMenu_(){
+  int row=0; bool localOn = DEBUG_MODE; uint8_t lvl = DEBUG_LEVEL;
+  while(open_){
+    d_->drawDebugMenu(localOn, lvl, row);
+    if(onUp && onUp()){   row=(row==0?4:row-1); delay(120); }
+    if(onDown && onDown()){ row=(row+1)%5;      delay(120); }
+    if((onLeft && onLeft()) || (onRight && onRight())){
+      bool right = (onRight && onRight());
+      if(row==0){ localOn = !localOn; }
+      else if(row==1){ if(right) { if(lvl<3) lvl++; } else { if(lvl>1) lvl--; } }
+    }
+    if(onClick && onClick()){
+      if(row==0){ DEBUG_MODE = localOn; DBG_PRINTLN(1, String("[CTRL] Local Debug ")+(DEBUG_MODE?"ON":"OFF")); }
+      else if(row==1){ DEBUG_LEVEL = lvl; DBG_PRINTLN(1, String("[CTRL] Local Debug Level ")+DEBUG_LEVEL); }
+      else if(row==2){ if(onSendDBGOn && onSendDBGOff) (localOn? onSendDBGOn(): onSendDBGOff()); }
+      else if(row==3){ if(onSendDBGLevel) onSendDBGLevel(lvl); }
+      else if(row==4){ break; }
+    }
+  }
+}

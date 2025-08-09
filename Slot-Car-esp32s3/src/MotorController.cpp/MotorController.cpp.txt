@@ -1,0 +1,53 @@
+#include "MotorController.h"
+#include <driver/ledc.h>
+
+bool MotorController::begin(int motorPin, int servoFrontPin, int servoRearPin, int analogInPin){
+  motorPin_=motorPin; sFront_=servoFrontPin; sRear_=servoRearPin; aIn_=analogInPin;
+
+  ledcSetup(chMotor_, PWM_FREQ_MOTOR, PWM_RES_MOTOR);
+  ledcAttachPin(motorPin_, chMotor_);
+
+  ledcSetup(chFront_, PWM_FREQ_SERVO, PWM_RES_SERVO);
+  ledcAttachPin(sFront_, chFront_);
+  ledcSetup(chRear_,  PWM_FREQ_SERVO, PWM_RES_SERVO);
+  ledcAttachPin(sRear_, chRear_);
+
+  ledcWrite(chFront_, 0);
+  ledcWrite(chRear_, 0);
+  safeNeutral();
+  return true;
+}
+
+void MotorController::setCurve(const uint8_t* arr){ memcpy(curve_, arr, sizeof(curve_)); }
+
+uint8_t MotorController::applyCurve(uint8_t in) const{
+  float x = (in/255.0f)*(CURVE_POINTS-1);
+  int i=(int)floor(x); if(i<0)i=0; if(i>=CURVE_POINTS-1)i=CURVE_POINTS-2;
+  float t=x-i;
+  return (uint8_t)((1.0f-t)*curve_[i] + t*curve_[i+1]);
+}
+
+void MotorController::applyCTRL(uint8_t thr, uint8_t brk){
+  uint8_t t = applyCurve(thr);
+  if(brk>0){ uint8_t cut = map(brk,0,255,0,t); t = t - cut; }
+  ledcWrite(chMotor_, t);
+}
+
+void MotorController::setTorque(uint8_t f, uint8_t r){
+  uint16_t uf = servoFromFriction_(f,true);
+  uint16_t ur = servoFromFriction_(r,false);
+  ledcWrite(chFront_, usToDuty(uf));
+  ledcWrite(chRear_,  usToDuty(ur));
+}
+
+void MotorController::safeNeutral(){
+  ledcWrite(chFront_, usToDuty(1500));
+  ledcWrite(chRear_,  usToDuty(1500));
+}
+
+void MotorController::fallbackTick(){
+  if(aIn_ < 0) return;
+  int a = analogRead(aIn_); // 0..4095
+  uint8_t thr = map(a,0,4095,0,255);
+  applyCTRL(thr,0);
+}
