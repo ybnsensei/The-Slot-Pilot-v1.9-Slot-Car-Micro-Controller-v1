@@ -1,0 +1,27 @@
+#pragma once
+#include <Arduino.h>
+
+enum class LaunchState : uint8_t { Idle, Armed, Launching, Cooldown };
+
+class LaunchControl {
+public:
+  void configure(uint16_t holdMs=800, uint16_t launchMs=1200, uint16_t cooldownMs=1500){
+    hold_=holdMs; launch_=launchMs; cool_=cooldownMs;
+  }
+  void arm(){ if(st_==LaunchState::Idle){ st_=LaunchState::Armed; ts_=millis(); } }
+  void abort(){ st_=LaunchState::Idle; }
+  void loop(){
+    uint32_t now=millis();
+    switch(st_){
+      case LaunchState::Idle: break;
+      case LaunchState::Armed: if(now-ts_>=hold_)     { st_=LaunchState::Launching; ts_=now; } break;
+      case LaunchState::Launching: if(now-ts_>=launch_){ st_=LaunchState::Cooldown; ts_=now; } break;
+      case LaunchState::Cooldown: if(now-ts_>=cool_)  { st_=LaunchState::Idle; } break;
+    }
+  }
+  LaunchState state() const { return st_; }
+  bool activeOutputBoost() const { return st_==LaunchState::Launching; }
+private:
+  LaunchState st_ = LaunchState::Idle;
+  uint32_t ts_=0; uint16_t hold_=800, launch_=1200, cool_=1500;
+};

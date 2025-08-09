@@ -1,0 +1,32 @@
+#include "DebugLog.h"
+#include <string.h>
+
+void DebugLog::clear(){ head_=0; count_=0; if(MAX_LINES>0) lines_[0][0]='\0'; }
+
+void DebugLog::add(const char* s){
+  size_t n = strnlen(s, MAX_LEN-1);
+  while(n>0 && (s[n-1]=='\n'||s[n-1]=='\r')) n--;
+  strncpy(lines_[head_], s, n);
+  lines_[head_][n] = '\0';
+  head_ = (head_ + 1) % MAX_LINES;
+  if(count_ < MAX_LINES) count_++;
+}
+
+void DebugLog::addf(const char* fmt, ...){
+  char buf[MAX_LEN];
+  va_list ap; va_start(ap, fmt);
+  vsnprintf(buf, sizeof(buf), fmt, ap);
+  va_end(ap);
+  add(buf);
+}
+
+String DebugLog::toText() const{
+  String out; out.reserve(count_ * 64);
+  int start = (count_ == MAX_LINES) ? head_ : 0;
+  for(int i=0;i<count_;++i){
+    int idx = (start + i) % MAX_LINES;
+    out += lines_[idx];
+    out += '\n';
+  }
+  return out;
+}

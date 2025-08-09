@@ -1,0 +1,37 @@
+#include "ProfileManager.h"
+#include <string.h>
+
+bool ProfileManager::begin(size_t eepromSize){
+  EEPROM.begin(eepromSize);
+  loadLocal();
+  return true;
+}
+
+void ProfileManager::saveLocal(){
+  store_.magic=0xA5;
+  memcpy(&store_.p,&profile_,sizeof(Profile));
+  store_.crc=crc8_((uint8_t*)&store_,sizeof(Store)-1);
+  EEPROM.put(0,store_); EEPROM.commit();
+  DBG_PRINTLN(2, "[CTRL] Profile saved to EEPROM");
+}
+
+void ProfileManager::loadLocal(){
+  EEPROM.get(0,store_);
+  if(store_.magic==0xA5 && crc8_((uint8_t*)&store_,sizeof(Store)-1)==store_.crc){
+    memcpy(&profile_,&store_.p,sizeof(Profile));
+    DBG_PRINTLN(2, "[CTRL] Profile loaded from EEPROM");
+  }else{
+    memset(&profile_,0,sizeof(Profile));
+    strcpy(profile_.name,"Slow");
+    profile_.locked=true; profile_.dualMotor=true;
+    profile_.throttle=0; profile_.brake=100;
+    profile_.traction=160; profile_.sensitivity=160; profile_.antiSpin=128; profile_.accel=128;
+    profile_.tsFront=192; profile_.tsRear=64; profile_.torquePresetIdx=2;
+    profile_.biasMode=0; profile_.fixedF=192; profile_.fixedR=64;
+    profile_.entryF=192; profile_.entryR=64; profile_.midF=128; profile_.midR=128; profile_.exitF=64; profile_.exitR=192;
+    static constexpr uint8_t kDefaultCurve[CURVE_POINTS] = {0,24,72,145,206,242,255,242,230,206,194};
+    memcpy(profile_.curve, kDefaultCurve, sizeof(profile_.curve));
+    saveLocal();
+    DBG_PRINTLN(2, "[CTRL] Default profile initialized");
+  }
+}

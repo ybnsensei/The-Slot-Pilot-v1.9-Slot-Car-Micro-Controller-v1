@@ -1,0 +1,17 @@
+#pragma once
+#include <Arduino.h>
+
+#define CURVE_POINTS 11
+
+class MotorModel {
+public:
+  void setCurve(const uint8_t* arr){ memcpy(curve_, arr, sizeof(curve_)); }
+  uint8_t applyCurve(uint8_t inPct) const {
+    float x = (inPct/255.0f)*(CURVE_POINTS-1);
+    int i = (int)floor(x); if(i<0) i=0; if(i>=CURVE_POINTS-1) i=CURVE_POINTS-2;
+    float t = x - i;
+    return (uint8_t)((1.0f-t)*curve_[i] + t*curve_[i+1]);
+  }
+private:
+  uint8_t curve_[CURVE_POINTS] = {0,24,72,145,206,242,255,242,230,206,194};
+};

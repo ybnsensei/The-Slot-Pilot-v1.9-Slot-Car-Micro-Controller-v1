@@ -1,0 +1,36 @@
+#pragma once
+#include <Arduino.h>
+#include <WiFi.h>
+#include <WebServer.h>
+#include <ArduinoOTA.h>
+#include <HTTPUpdateServer.h>
+#include <LittleFS.h>
+#include "Debug.h"
+#include "NetUdp.h"
+
+// Pico 2 W: WebServer + HTTPUpdateServer + ArduinoOTA
+class NetHttpPicoOTA {
+public:
+  void begin(NetUdp* udp, const char* hostname);
+  void loop(){ ArduinoOTA.handle(); server_.handleClient(); }
+
+private:
+  WebServer        server_{80};
+  HTTPUpdateServer httpUpdater_;
+  NetUdp* udp_ = nullptr;
+
+  static const char* kIndex;
+
+  // handlers
+  void handleRoot();
+  void pageDebug();
+  void txtDebug();
+  void clearDebugPost();
+  void clearDebugGet();
+  void dbgOn();
+  void dbgOff();
+  void dbgLevel();
+  void carDbgOn();
+  void carDbgOff();
+  void carDbgLevel();
+};

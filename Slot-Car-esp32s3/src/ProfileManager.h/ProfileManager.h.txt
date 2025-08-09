@@ -1,0 +1,34 @@
+#pragma once
+#include <Arduino.h>
+#include <EEPROM.h>
+
+#define CURVE_POINTS 11
+
+struct Config {
+  bool     locked;
+  bool     dualMotor;
+  uint8_t  brake, traction, sensitivity, antiSpin, accel;
+  uint8_t  tsFront, tsRear;
+  uint8_t  biasMode;         // 0=fixed,1=auto
+  uint8_t  fixedF, fixedR;
+  uint8_t  entryF, entryR, midF, midR, exitF, exitR;
+  uint8_t  curve[CURVE_POINTS];
+};
+
+class ProfileManager {
+public:
+  bool begin(size_t eepromSize=1024);
+  Config& cur(){ return cfg_; }
+  const Config& saved() const { return saved_; }
+  void setCurve(const uint8_t* v){ memcpy(cfg_.curve, v, sizeof(cfg_.curve)); }
+  void save();
+  void loadDefaultIfNeeded();
+
+private:
+  struct Store { uint8_t magic; Config cfg; uint8_t crc; } store_{};
+  Config cfg_{}, saved_{};
+
+  static uint8_t crc8_(const uint8_t* d, size_t n){
+    uint8_t c=0; for(size_t i=0;i<n;i++){ c ^= d[i]; for(int b=0;b<8;b++) c = (c & 0x80)? (c<<1)^0x07 : (c<<1); } return c;
+  }
+};

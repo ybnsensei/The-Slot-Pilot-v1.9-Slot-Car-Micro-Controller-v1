@@ -1,0 +1,26 @@
+#pragma once
+#include <Arduino.h>
+#include <WiFiUdp.h>
+#include "Debug.h"
+
+class NetUdp {
+public:
+  void begin(uint16_t port);
+  void loop();
+  void setCarIP(IPAddress ip){ carIP_ = ip; }
+  IPAddress carIP() const { return carIP_; }
+  bool carConnected() const { return carConnected_; }
+  void setOnPacket(std::function<void(const char*)> cb){ onPkt_ = cb; }
+
+  // Tx helpers
+  void send(const String& s);
+  void ping(){ send("PING"); }
+
+private:
+  WiFiUDP udp_;
+  IPAddress carIP_;
+  bool carConnected_ = false;
+  unsigned long lastRx_ = 0;
+  static constexpr unsigned long TIMEOUT_MS = 3000;
+  std::function<void(const char*)> onPkt_;
+};

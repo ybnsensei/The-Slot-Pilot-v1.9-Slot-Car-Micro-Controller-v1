@@ -1,0 +1,35 @@
+#pragma once
+#include <Arduino.h>
+
+#define CURVE_POINTS 11
+
+class MotorController {
+public:
+  bool begin(int motorPin, int servoFrontPin, int servoRearPin, int analogInPin);
+  void setCurve(const uint8_t* arr);
+  uint8_t applyCurve(uint8_t in) const;
+
+  void applyCTRL(uint8_t thr, uint8_t brk);
+  void setTorque(uint8_t front, uint8_t rear);
+  void safeNeutral();
+  void fallbackTick();
+
+private:
+  int motorPin_=-1, sFront_=-1, sRear_=-1, aIn_=-1;
+  uint8_t curve_[CURVE_POINTS] = {0,24,72,145,206,242,255,242,230,206,194};
+
+  int chMotor_=0, chFront_=1, chRear_=2;
+  static constexpr int PWM_FREQ_MOTOR=20000; // 20 kHz, 8-bit
+  static constexpr int PWM_RES_MOTOR =8;
+  static constexpr int PWM_FREQ_SERVO=50;    // 50 Hz, 16-bit
+  static constexpr int PWM_RES_SERVO =16;
+
+  static uint32_t usToDuty(uint16_t us){
+    return (uint32_t)((us * 65535UL)/20000UL); // 20ms period @ 16-bit
+  }
+  uint16_t servoFromFriction_(uint8_t lvl, bool front) const {
+    const uint16_t minUS=1000, maxUS=2000;
+    if(front) return minUS + (uint16_t)((maxUS-minUS)* (lvl/255.0f));
+    else      return maxUS - (uint16_t)((maxUS-minUS)* (lvl/255.0f));
+  }
+};

@@ -1,0 +1,31 @@
+#include "ProfileManager.h"
+#include <string.h>
+
+bool ProfileManager::begin(size_t eepromSize){
+  EEPROM.begin(eepromSize);
+  EEPROM.get(0, store_);
+  if(store_.magic==0xA5 && crc8_((uint8_t*)&store_, sizeof(Store)-1)==store_.crc){
+    memcpy(&saved_, &store_.cfg, sizeof(Config)); cfg_ = saved_;
+  } else {
+    loadDefaultIfNeeded();
+    save();
+  }
+  return true;
+}
+
+void ProfileManager::save(){
+  store_.magic=0xA5;
+  memcpy(&store_.cfg, &cfg_, sizeof(Config));
+  store_.crc=crc8_((uint8_t*)&store_, sizeof(Store)-1);
+  EEPROM.put(0, store_);
+  EEPROM.commit();
+  saved_ = cfg_;
+}
+
+void ProfileManager::loadDefaultIfNeeded(){
+  memset(&cfg_,0,sizeof(cfg_));
+  cfg_.tsFront=192; cfg_.tsRear=64;
+  uint8_t defC[CURVE_POINTS] = {0,24,72,145,206,242,255,242,230,206,194};
+  memcpy(cfg_.curve,defC,sizeof(cfg_.curve));
+  saved_ = cfg_;
+}

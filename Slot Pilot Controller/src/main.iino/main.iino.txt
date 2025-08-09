@@ -1,0 +1,176 @@
+/******************************************************
+ * Slot Pilot Controller — Raspberry Pi Pico 2 W (RP2350)
+ * - STA Wi-Fi joins the car AP (XIAO ESP32S3 AP)
+ * - OTA:
+ *     • Web: /update (HTTPUpdateServer)
+ *     • IDE: ArduinoOTA (Network Port) hostname "slot-pilot"
+ * - /debug page for logs + toggles (and remote car debug)
+ * - UDP to car; OLED UI + Menus; EEPROM profile
+ ******************************************************/
+#include <Arduino.h>
+#include <WiFi.h>
+#include "Debug.h"
+#include "DisplayManager.h"
+#include "MotorModel.h"
+#include "ProfileManager.h"
+#include "LaunchControl.h"
+#include "Menu.h"
+#include "NetUdp.h"
+#include "NetHttpPicoOTA.h"
+
+// Pins (Pico 2 W)
+#define I2C_SDA_PIN       4   // GPIO4  (I2C0 SDA)
+#define I2C_SCL_PIN       5   // GPIO5  (I2C0 SCL)
+#define JOY_X_PIN         26  // ADC0 (GPIO26)
+#define JOY_Y_PIN         27  // ADC1 (GPIO27)
+#define JOY_BTN_PIN       6   // GPIO6 (digital input w/ pull-up)
+
+#define CURVE_POINTS 11
+
+// Wi-Fi (joins the Car's AP)
+const char* WIFI_SSID_STA     = "SlotPilot_CAR_OTA";
+const char* WIFI_PASSWORD_STA = "update123";
+
+static DisplayManager  displayMgr;
+static MotorModel      motorModel;
+static ProfileManager  profileMgr;
+static LaunchControl   launchCtl;
+static MenuUI          menu;
+static NetUdp          netUdp;
+static NetHttpPicoOTA  netHttp;
+
+static int  joyX=2048, joyY=2048;
+static bool joyClick=false, holdEntering=false;
+static unsigned long holdStart=0;
+static int  focusIdx=0;
+
+// UDP receive -> handle ACKs (optional)
+static void onUdpPacket(const char* pkt){
+  if(strncmp(pkt,"ACK|SAVE",8)==0){ LOGBUF.add("[CTRL] Car ACK SAVE"); }
+}
+
+// Input helpers
+static void readInputs(){
+  joyX = analogRead(JOY_X_PIN);
+  joyY = analogRead(JOY_Y_PIN);
+  bool pressed = (digitalRead(JOY_BTN_PIN)==LOW);
+  if(pressed && !joyClick){ holdStart=millis(); holdEntering=true; }
+  if(!pressed && joyClick){ holdEntering=false; }
+  if(holdEntering && pressed && (millis()-holdStart>2000)){
+    if(menu.isOpen()) menu.close(); else menu.open();
+    holdEntering=false;
+  }
+  joyClick = pressed;
+}
+static bool up()   { return joyY < 800; }
+static bool down() { return joyY > 3300; }
+static bool left() { return joyX < 800; }
+static bool right(){ return joyX > 3300; }
+
+// UDP send helpers
+static void sendCFG(){
+  auto& p = profileMgr.cur();
+  String s="CFG|";
+  s += String(p.locked?1:0)+",";
+  s += String(p.dualMotor?1:0)+",";
+  s += String(p.brake)+","+String(p.traction)+","+String(p.sensitivity)+","+String(p.antiSpin)+","+String(p.accel)+",";
+  s += String(p.tsFront)+","+String(p.tsRear)+","+String(p.biasMode)+",";
+  s += String(p.fixedF)+","+String(p.fixedR)+",";
+  s += String(p.entryF)+","+String(p.entryR)+","+String(p.midF)+","+String(p.midR)+","+String(p.exitF)+","+String(p.exitR)+"|";
+  for(int i=0;i<CURVE_POINTS;i++){ s+=String(p.curve[i]); if(i<CURVE_POINTS-1) s+=","; }
+  netUdp.send(s);
+}
+static void sendCurve(){
+  auto& p=profileMgr.cur();
+  String s="CURVE|";
+  for(int i=0;i<CURVE_POINTS;i++){ s+=String(p.curve[i]); if(i<CURVE_POINTS-1) s+=","; }
+  netUdp.send(s);
+}
+static void sendBias(){
+  auto& p=profileMgr.cur();
+  String s="BIAS|"+String(p.biasMode)+"|"+
+           String(p.fixedF)+"|"+String(p.fixedR)+"|"+
+           String(p.entryF)+"|"+String(p.entryR)+"|"+
+           String(p.midF)+"|"+String(p.midR)+"|"+
+           String(p.exitF)+"|"+String(p.exitR);
+  netUdp.send(s);
+}
+static void sendSAVE(){ netUdp.send("CFG|SAVE"); }
+
+void setup(){
+  Serial.begin(115200);
+  pinMode(JOY_BTN_PIN, INPUT_PULLUP);
+  LOGBUF.clear(); LOGBUF.add("[BOOT] Slot Pilot Controller (Pico 2 W)");
+
+  // Display + storage
+  displayMgr.begin(0x3C, I2C_SDA_PIN, I2C_SCL_PIN);
+  profileMgr.begin(1024);
+  motorModel.setCurve(profileMgr.cur().curve);
+
+  // Wi-Fi STA: join car AP
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID_STA, WIFI_PASSWORD_STA);
+  LOGBUF.add("[NET] WiFi connecting…");
+  unsigned long t0=millis();
+  while(WiFi.status()!=WL_CONNECTED && millis()-t0<8000){ delay(200); }
+  if(WiFi.status()==WL_CONNECTED){
+    LOGBUF.addf("[NET] WiFi OK: %s", WiFi.localIP().toString().c_str());
+  }else{
+    LOGBUF.add("[NET] WiFi not connected yet (continuing)");
+  }
+
+  // UDP + HTTP/OTA
+  netUdp.begin(4210);
+  netUdp.setOnPacket(onUdpPacket);
+  netHttp.begin(&netUdp, "slot-pilot");
+
+  // Menu wiring
+  menu.begin(&displayMgr, &profileMgr, &motorModel);
+  menu.onSendCFG  = [](){ sendCFG(); };
+  menu.onSendSAVE = [](){ sendSAVE(); };
+  menu.onSendCurve= [](){ sendCurve(); };
+  menu.onSendBias = [](){ sendBias(); };
+  menu.onSendDBGOn  = [](){ netUdp.send("DBG|ON");  };
+  menu.onSendDBGOff = [](){ netUdp.send("DBG|OFF"); };
+  menu.onSendDBGLevel = [](uint8_t lvl){ netUdp.send(String("DBG|LEVEL|")+lvl); };
+
+  menu.onUp    = [](){ return up();    };
+  menu.onDown  = [](){ return down();  };
+  menu.onLeft  = [](){ return left();  };
+  menu.onRight = [](){ return right(); };
+  menu.onClick = [](){ return (digitalRead(JOY_BTN_PIN)==LOW); };
+}
+
+void loop(){
+  netHttp.loop();
+  netUdp.loop();
+  readInputs();
+
+  if(!menu.isOpen()){
+    auto& p = profileMgr.cur();
+    displayMgr.drawTelemetry(p.name, p.locked, netUdp.carConnected(), p.tsFront, p.throttle, p.brake, focusIdx, DEBUG_MODE);
+
+    // Quick torque split edit on focus
+    if(focusIdx==2){
+      if(left()  && p.tsFront>0){ p.tsFront--; p.tsRear=255-p.tsFront; sendCFG(); delay(30); }
+      if(right() && p.tsFront<255){ p.tsFront++; p.tsRear=255-p.tsFront; sendCFG(); delay(30); }
+    }
+
+    // short press cycles focus
+    static bool lastPress=false;
+    bool nowPress=(digitalRead(JOY_BTN_PIN)==LOW);
+    if(nowPress && !lastPress){ focusIdx=(focusIdx+1)%11; }
+    lastPress=nowPress;
+
+    // periodic CTRL + PING
+    static unsigned long lastCtrl=0, lastPing=0;
+    if(millis()-lastCtrl>60){
+      uint8_t curved = motorModel.applyCurve(p.throttle);
+      netUdp.send(String("CTRL|")+curved+"|"+p.brake);
+      lastCtrl=millis();
+    }
+    if(millis()-lastPing>1000){ netUdp.ping(); lastPing=millis(); }
+  } else {
+    menu.tick();
+  }
+}

@@ -1,0 +1,44 @@
+#pragma once
+#include <Arduino.h>
+#include <functional>
+#include "DisplayManager.h"
+#include "ProfileManager.h"
+#include "MotorModel.h"
+
+class MenuUI {
+public:
+  void begin(DisplayManager* d, ProfileManager* pm, MotorModel* mm);
+  void open(){ open_=true; sel_=0; }
+  void close(){ open_=false; }
+  bool isOpen() const { return open_; }
+  void tick();
+
+  // Input callbacks
+  std::function<bool(void)> onUp, onDown, onLeft, onRight, onClick;
+
+  // Actions
+  std::function<void(void)> onSendCFG, onSendSAVE, onSendCurve, onSendBias;
+  std::function<void(void)> onSendDBGOn, onSendDBGOff;
+  std::function<void(uint8_t)> onSendDBGLevel;
+
+private:
+  DisplayManager* d_=nullptr;
+  ProfileManager* pm_=nullptr;
+  MotorModel*     mm_=nullptr;
+
+  int  sel_=0;
+  bool open_=false;
+
+  static constexpr const char* kMainItems[7] = {
+    "AWD Bias","Curve Mapping","Profiles","Send CFG|SAVE","Start OTA","Debug Mode","Exit"
+  };
+  static constexpr int kMainCount = 7;
+
+  void runBiasMenu_();
+  void runBiasPresets_();
+  void runBiasFixed_();
+  void runBiasEMX_();
+  void runCurveEditor_();
+  void runProfiles_();
+  void runDebugMenu_();
+};
