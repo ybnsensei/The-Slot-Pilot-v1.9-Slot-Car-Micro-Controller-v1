@@ -1,0 +1,17 @@
+#pragma once
+#include <Arduino.h>
+#include <WiFiUdp.h>
+#include "Debug.h"
+
+class NetUdp {
+public:
+  void begin(uint16_t port);
+  void loop();
+
+  void setOnPacket(std::function<void(const IPAddress&, uint16_t, const char*)> cb){ cb_=cb; }
+  void replyTo(const IPAddress& ip, uint16_t port, const String& s);
+
+private:
+  WiFiUDP udp_;
+  std::function<void(const IPAddress&, uint16_t, const char*)> cb_;
+};

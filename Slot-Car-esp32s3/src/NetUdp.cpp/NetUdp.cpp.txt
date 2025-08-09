@@ -1,0 +1,23 @@
+#include "NetUdp.h"
+
+void NetUdp::begin(uint16_t port){
+  udp_.begin(port);
+  LOGBUF.addf("[UDP] Listening on %u", port);
+}
+
+void NetUdp::loop(){
+  int n = udp_.parsePacket();
+  if(n<=0) return;
+  static char buf[512];
+  int len = udp_.read(buf, sizeof(buf)-1); if(len<=0) return; buf[len]=0;
+  IPAddress rip = udp_.remoteIP(); uint16_t rport = udp_.remotePort();
+  if(DEBUG_MODE) DBG_PRINTF(3,"[UDP] %s:%u %s\n", rip.toString().c_str(), rport, buf);
+  if(cb_) cb_(rip, rport, buf);
+}
+
+void NetUdp::replyTo(const IPAddress& ip, uint16_t port, const String& s){
+  udp_.beginPacket(ip, port);
+  udp_.print(s);
+  udp_.endPacket();
+  if(DEBUG_MODE) DBG_PRINTF(3,"[UDP] -> %s\n", s.c_str());
+}

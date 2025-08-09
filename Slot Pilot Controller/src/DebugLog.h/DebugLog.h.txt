@@ -1,0 +1,19 @@
+#pragma once
+#include <Arduino.h>
+#include <stdarg.h>
+
+class DebugLog {
+public:
+  static const int MAX_LINES = 250;
+  static const int MAX_LEN   = 160;
+
+  void clear();
+  void add(const char* s);
+  void addf(const char* fmt, ...);
+  String toText() const;
+
+private:
+  char lines_[MAX_LINES][MAX_LEN];
+  int  head_ = 0;
+  int  count_ = 0;
+};

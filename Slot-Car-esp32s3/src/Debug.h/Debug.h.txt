@@ -1,0 +1,10 @@
+#pragma once
+#include <Arduino.h>
+#include "DebugLog.h"
+
+extern bool     DEBUG_MODE;
+extern uint8_t  DEBUG_LEVEL;
+extern DebugLog LOGBUF;
+
+#define DBG_PRINTLN(level, X) do{ if(DEBUG_MODE && DEBUG_LEVEL >= (level)) { Serial.println(X); LOGBUF.add(X); } }while(0)
+#define DBG_PRINTF(level, FMT, ...) do{ if(DEBUG_MODE && DEBUG_LEVEL >= (level)) { Serial.printf(FMT, ##__VA_ARGS__); char __b[192]; snprintf(__b,sizeof(__b),FMT,##__VA_ARGS__); LOGBUF.add(__b);} }while(0)

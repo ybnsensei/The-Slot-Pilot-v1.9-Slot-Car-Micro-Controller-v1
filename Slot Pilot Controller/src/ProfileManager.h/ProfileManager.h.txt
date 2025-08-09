@@ -1,0 +1,35 @@
+#pragma once
+#include <Arduino.h>
+#include <EEPROM.h>
+#include "Debug.h"
+
+#define CURVE_POINTS 11
+
+struct Profile {
+  char     name[12];
+  bool     locked;
+  bool     dualMotor;
+  uint8_t  throttle, brake, traction, sensitivity, antiSpin, accel;
+  uint8_t  tsFront, tsRear;
+  uint8_t  torquePresetIdx; // 0..4
+  uint8_t  biasMode;        // 0=fixed,1=auto
+  uint8_t  fixedF, fixedR;
+  uint8_t  entryF, entryR, midF, midR, exitF, exitR;
+  uint8_t  curve[CURVE_POINTS];
+};
+
+class ProfileManager {
+public:
+  bool begin(size_t eepromSize=1024);
+  Profile& cur(){ return profile_; }
+  void saveLocal();
+  void loadLocal();
+
+private:
+  struct Store { uint8_t magic; Profile p; uint8_t crc; } store_{};
+  Profile profile_{};
+
+  static uint8_t crc8_(const uint8_t* d, size_t n){
+    uint8_t c=0; for(size_t i=0;i<n;i++){ c ^= d[i]; for(int b=0;b<8;b++) c = (c & 0x80)? (c<<1)^0x07 : (c<<1); } return c;
+  }
+};

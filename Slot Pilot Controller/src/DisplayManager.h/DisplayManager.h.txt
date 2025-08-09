@@ -1,0 +1,28 @@
+#pragma once
+#include <Arduino.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+class DisplayManager {
+public:
+  bool begin(uint8_t addr = 0x3C, int sda=-1, int scl=-1);
+  void drawTelemetry(const String& profileName, bool locked, bool carConn, int tsFrontRaw,
+                     uint8_t throttle, uint8_t coastBrake, int focusIdx, bool dbg);
+  void drawMainMenu(const char** items, int count, int sel);
+  void drawBiasMenu(int sel);
+  void drawBiasPresets(uint8_t currentIdx, const uint8_t* front);
+  void drawBiasFixed(uint8_t f,uint8_t r,int idx);
+  void drawBiasEMX(uint8_t ef,uint8_t er,uint8_t mf,uint8_t mr,uint8_t xf,uint8_t xr,int idx);
+  void drawCurveEditor(const uint8_t* curve, int points, int cursor);
+  void drawDebugMenu(bool on, uint8_t lvl, int row);
+  void toast(const String& msg, uint16_t ms=800);
+
+private:
+  Adafruit_SSD1306 d_{128,64,&Wire,-1};
+  uint8_t shimmerPhase_=0;
+  static uint8_t barsFromRSSI_(long rssi);
+  void drawConnBars_(uint8_t b);
+  void drawLock_(bool locked,int x,int y);
+  void drawShimmerBar_(int x,int y,int w,int h,int value,uint8_t phase);
+};
