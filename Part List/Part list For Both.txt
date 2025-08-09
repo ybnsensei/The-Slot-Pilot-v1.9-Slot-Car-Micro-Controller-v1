@@ -1,0 +1,38 @@
+## Bill of Materials (BOM)
+
+This list covers only the electronics and internal components used in the Slot Pilot Controller.
+
+| Qty | Part Name | Notes / Specs |
+|-----|-----------|---------------|
+| 1 | Raspberry Pi Pico 2 W | RP2350, Wi-Fi + Bluetooth |
+| 1 | OLED Display 0.96" SSD1306 | I²C interface |
+| 1 | Adafruit MCP9808 Temperature Sensor | Stemma QT/Qwiic compatible |
+| 1 | IRF3205 N-Channel MOSFET | TO-220AB, logic level |
+| 1 | LM2596 DC-DC Buck Converter | 12–18V input → 5V output |
+| 1 | 30mm Quiet Fan | 5V |
+| 1 | SPDT Slide Switch | For analog/digital mode selection |
+| 7 | 10k Potentiometers | For live tuning |
+| 1 | Hall Effect Trigger Sensor (A1324LUA-T) | For throttle input |
+| 1 | Momentary Tactile Push Button | For Launch Control |
+| 1 | NTC Thermistor 10D-9 | For inrush current limiting |
+| 4–6 | 0.1µF Ceramic Capacitors | Noise filtering |
+| 1 | 1000µF Electrolytic Capacitor (16V–25V) | Power smoothing |
+| 2 | 4.7kΩ or 10kΩ Resistors | I²C pull-ups |
+
+
+
+
+## Bill of Materials (BOM)
+
+This list covers only the electronics and internal components used in the Slot Car Microcontroller.
+
+| Qty | Part Name | Notes / Specs |
+|-----|-----------|---------------|
+| 1 | Seeed Studio XIAO ESP32-S3 | With Wi-Fi + Bluetooth |
+| 1 | Dual Motor Driver or MOSFET (per design) | PWM control |
+| 2 | PWM Torque Servo Outputs | For AWD torque bias control |
+| 1 | Voltage Regulator (if required) | Step-down for electronics |
+| 1 | Capacitor, 0.1µF | Noise filtering |
+| 1 | Capacitor, 1000µF (16V–25V) | Power smoothing |
+| 2 | 4.7kΩ or 10kΩ Resistors | I²C pull-ups (if sensors used) |
+| — | Wiring, connectors | Per build |
